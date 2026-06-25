@@ -1,45 +1,444 @@
-name: Build Android APK
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinanzPlaner</title>
+    <style>
+        :root {
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --primary: #4a6fa5;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --border: #e1e8ed;
+        }
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 15px;
+            padding-bottom: 40px;
+        }
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+        h1, h2, h3 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
 
-      - name: Install Dependencies
-        run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap init "FinanzPlaner" "com.deineapp.finanzen" --web-dir=.
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
 
-      - name: Add Android Platform
-        run: |
-          npx cap add android
-          npx cap sync
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+        /* Konten-Übersicht */
+        .accounts-grid {
+            display: table;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        .account-row {
+            display: table-row;
+        }
+        .account-box {
+            display: table-cell;
+            width: 50%;
+            padding: 10px;
+            text-align: center;
+        }
+        .balance {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        .balance.positive { color: var(--success); }
+        .balance.negative { color: var(--danger); }
 
-      - name: Build APK
-        run: |
-          cd android && ./gradlew assembleDebug
+        /* Formular-Elemente */
+        .form-group {
+            margin-bottom: 12px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        button:active {
+            opacity: 0.9;
+        }
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: App-Release-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          
+        /* Filter & Listen */
+        .filter-buttons {
+            display: table;
+            width: 100%;
+            margin-bottom: 15px;
+        }
+        .filter-btn {
+            display: table-cell;
+            background: #e1e8ed;
+            color: #555;
+            padding: 8px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .filter-btn.active {
+            background: var(--primary);
+            color: white;
+        }
+        .filter-btn:first-child { border-radius: 6px 0 0 6px; }
+        .filter-btn:last-child { border-radius: 0 6px 6px 0; }
+
+        .list-item {
+            display: table;
+            width: 100%;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .list-cell-main {
+            display: table-cell;
+        }
+        .list-cell-amount {
+            display: table-cell;
+            text-align: right;
+            font-weight: bold;
+            vertical-align: middle;
+        }
+        .item-title { font-weight: 600; }
+        .item-sub { font-size: 12px; color: #7f8c8d; }
+
+        /* Budgets */
+        .budget-progress-container {
+            background: #eee;
+            border-radius: 4px;
+            height: 12px;
+            width: 100%;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .budget-progress-bar {
+            height: 100%;
+            background: var(--success);
+            width: 0%;
+            transition: width 0.3s, background-color 0.3s;
+        }
+        .budget-progress-bar.over {
+            background: var(--danger);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>💰 FinanzPlaner</h1>
+
+    <div class="card">
+        <h2>Konten & Gesamtsaldo</h2>
+        <div class="accounts-grid">
+            <div class="account-row">
+                <div class="account-box" style="border-right: 1px solid var(--border);">
+                    <div class="item-sub">Girokonto</div>
+                    <div id="giro-val" class="balance positive">0,00 €</div>
+                </div>
+                <div class="account-box">
+                    <div class="item-sub">Sparkonto</div>
+                    <div id="spar-val" class="balance positive">0,00 €</div>
+                </div>
+            </div>
+        </div>
+        <div style="text-align: center; margin-top: 15px; border-top: 1px solid var(--border); padding-top: 10px;">
+            <div class="item-sub">Gesamtsaldo (Verrechnet)</div>
+            <div id="total-val" class="balance" style="font-size: 24px;">0,00 €</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Neue Buchung</h2>
+        <div class="form-group">
+            <label>Titel / Verwendungszweck</label>
+            <input type="text" id="tx-title" placeholder="z.B. Gehalt, Einkauf...">
+        </div>
+        <div class="form-group">
+            <label>Betrag (€)</label>
+            <input type="number" id="tx-amount" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+            <label>Typ</label>
+            <select id="tx-type">
+                <option value="income">Einnahme (+)</option>
+                <option value="expense">Ausgabe (-)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Konto</label>
+            <select id="tx-account">
+                <option value="giro">Girokonto</option>
+                <option value="spar">Sparkonto</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Zeitrahmen / Intervall</label>
+            <select id="tx-interval">
+                <option value="once">Einmalig</option>
+                <option value="monthly">Monatlich (wiederkehrend)</option>
+                <option value="yearly">Jährlich (wiederkehrend)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Kategorie (Für Budget)</label>
+            <select id="tx-category">
+                <option value="none">Keine / Allgemein</option>
+                <option value="lebensmittel">Lebensmittel</option>
+                <option value="freizeit">Freizeit & Hobby</option>
+                <option value="wohnen">Wohnen & Fixkosten</option>
+            </select>
+        </div>
+        <button onclick="addTransaction()">Buchung speichern</button>
+    </div>
+
+    <div class="card">
+        <h2>Monatliche Budgets</h2>
+        <div style="margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+            <div class="form-group">
+                <label>Kategorie wählen & Limit setzen</label>
+                <select id="budget-cat" style="margin-bottom: 8px;">
+                    <option value="lebensmittel">Lebensmittel</option>
+                    <option value="freizeit">Freizeit & Hobby</option>
+                    <option value="wohnen">Wohnen & Fixkosten</option>
+                </select>
+                <input type="number" id="budget-limit" placeholder="Limit in €">
+            </div>
+            <button onclick="setBudget()" style="background-color: #7f8c8d;">Budget festlegen</button>
+        </div>
+        
+        <div id="budget-list">
+            </div>
+    </div>
+
+    <div class="card">
+        <h2>Buchungshistorie</h2>
+        <div class="filter-buttons">
+            <div class="filter-btn active" id="f-all" onclick="setFilter('all')">Alle</div>
+            <div class="filter-btn" id="f-monthly" onclick="setFilter('monthly')">Monatlich</div>
+            <div class="filter-btn" id="f-yearly" onclick="setFilter('yearly')">Jährlich</div>
+        </div>
+        <div id="tx-list">
+            </div>
+    </div>
+</div>
+
+<script>
+    // Datenstruktur laden oder neu anlegen
+    let state = JSON.parse(localStorage.getItem('finanz_data')) || {
+        transactions: [],
+        budgets: {
+            lebensmittel: 0,
+            freizeit: 0,
+            wohnen: 0
+        }
+    };
+
+    let currentFilter = 'all';
+
+    function saveState() {
+        localStorage.setItem('finanz_data', JSON.stringify(state));
+        render();
+    }
+
+    function addTransaction() {
+        const title = document.getElementById('tx-title').value.trim();
+        const amount = parseFloat(document.getElementById('tx-amount').value);
+        const type = document.getElementById('tx-type').value;
+        const account = document.getElementById('tx-account').value;
+        const interval = document.getElementById('tx-interval').value;
+        const category = document.getElementById('tx-category').value;
+
+        if (!title || isNaN(amount) || amount <= 0) {
+            alert('Bitte gib einen gültigen Titel und Betrag ein.');
+            return;
+        }
+
+        const newTx = {
+            id: Date.now(),
+            title: title,
+            amount: amount,
+            type: type,
+            account: account,
+            interval: interval,
+            category: category,
+            date: new Date().toLocaleDateString('de-DE')
+        };
+
+        state.transactions.push(newTx);
+        
+        // Formular leeren
+        document.getElementById('tx-title').value = '';
+        document.getElementById('tx-amount').value = '';
+        
+        saveState();
+    }
+
+    function deleteTransaction(id) {
+        state.transactions = state.transactions.filter(t => t.id !== id);
+        saveState();
+    }
+
+    function setBudget() {
+        const cat = document.getElementById('budget-cat').value;
+        const limit = parseFloat(document.getElementById('budget-limit').value);
+
+        if (isNaN(limit) || limit < 0) {
+            alert('Bitte ein gültiges Limit eingeben.');
+            return;
+        }
+
+        state.budgets[cat] = limit;
+        document.getElementById('budget-limit').value = '';
+        saveState();
+    }
+
+    function setFilter(filter) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`f-${filter}`).classList.add('active');
+        render();
+    }
+
+    function render() {
+        // 1. Kontostände berechnen
+        let giro = 0;
+        let spar = 0;
+        let catExpenses = { lebensmittel: 0, freizeit: 0, wohnen: 0 };
+
+        state.transactions.forEach(tx => {
+            let val = tx.amount;
+            if (tx.type === 'expense') {
+                val = -val;
+                // Für Monatsbudget relevante Ausgaben addieren (Einmalig & Monatlich zählen hier rein)
+                if (tx.category !== 'none' && tx.interval !== 'yearly') {
+                    catExpenses[tx.category] += tx.amount;
+                }
+            }
+
+            if (tx.account === 'giro') giro += val;
+            if (tx.account === 'spar') spar += val;
+        });
+
+        const total = giro + spar;
+
+        // Anzeigen updaten
+        document.getElementById('giro-val').innerText = giro.toFixed(2).replace('.', ',') + ' €';
+        document.getElementById('giro-val').className = 'balance ' + (giro >= 0 ? 'positive' : 'negative');
+        
+        document.getElementById('spar-val').innerText = spar.toFixed(2).replace('.', ',') + ' €';
+        document.getElementById('spar-val').className = 'balance ' + (spar >= 0 ? 'positive' : 'negative');
+        
+        document.getElementById('total-val').innerText = total.toFixed(2).replace('.', ',') + ' €';
+        document.getElementById('total-val').className = 'balance ' + (total >= 0 ? 'positive' : 'negative');
+
+        // 2. Budgets listen
+        const budgetListHTML = document.getElementById('budget-list');
+        budgetListHTML.innerHTML = '';
+        
+        const catNamen = { lebensmittel: '🛒 Lebensmittel', freizeit: '🎉 Freizeit & Hobby', wohnen: '🏠 Wohnen & Fixkosten' };
+        
+        Object.keys(state.budgets).forEach(cat => {
+            const limit = state.budgets[cat];
+            if (limit > 0) {
+                const spent = catExpenses[cat];
+                const pct = Math.min((spent / limit) * 100, 100);
+                const isOver = spent > limit;
+                
+                budgetListHTML.innerHTML += `
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: table; width: 100%; font-size: 14px;">
+                            <div style="display: table-cell;"><strong>${catNamen[cat]}</strong></div>
+                            <div style="display: table-cell; text-align: right;">${spent.toFixed(2)} € / ${limit.toFixed(2)} €</div>
+                        </div>
+                        <div class="budget-progress-container">
+                            <div class="budget-progress-bar ${isOver ? 'over' : ''}" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+
+        // 3. Transaktionsliste filtern & rendern
+        const txListHTML = document.getElementById('tx-list');
+        txListHTML.innerHTML = '';
+
+        const filtered = state.transactions.filter(tx => {
+            if (currentFilter === 'all') return true;
+            return tx.interval === currentFilter;
+        });
+
+        if (filtered.length === 0) {
+            txListHTML.innerHTML = '<div style="color: #7f8c8d; text-align: center; padding: 10px;">Keine Buchungen vorhanden.</div>';
+        }
+
+        // Neueste Buchungen zuerst anzeigen
+        [...filtered].reverse().forEach(tx => {
+            const isInc = tx.type === 'income';
+            const sign = isInc ? '+' : '-';
+            const color = isInc ? 'var(--success)' : 'var(--danger)';
+            const intervalText = tx.interval === 'monthly' ? '• Monatlich' : tx.interval === 'yearly' ? '• Jährlich' : '';
+            
+            txListHTML.innerHTML += `
+                <div class="list-item">
+                    <div class="list-cell-main">
+                        <div class="item-title">${tx.title}</div>
+                        <div class="item-sub">${tx.date} ${intervalText} (${tx.account === 'giro' ? 'Giro' : 'Spar'})</div>
+                    </div>
+                    <div class="list-cell-amount" style="color: ${color};">
+                        ${sign}${tx.amount.toFixed(2).replace('.', ',')} €
+                        <span style="color: #bbb; margin-left: 10px; cursor: pointer; font-size: 14px;" onclick="deleteTransaction(${tx.id})">❌</span>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    // Erstes Laden der Ansicht
+    render();
+</script>
+
+</body>
+  </html>
+  
